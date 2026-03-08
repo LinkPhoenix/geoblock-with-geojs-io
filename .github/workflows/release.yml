@@ -21,3 +21,4 @@ jobs:
           makeLatest: true
           generateReleaseNotes: false
           bodyFile: CHANGELOG.md
+          skipIfReleaseExists: true

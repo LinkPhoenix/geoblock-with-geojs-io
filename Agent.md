@@ -42,6 +42,8 @@ Ensure this repository always satisfies Traefik plugin catalog requirements befo
   - `Z`: patch release (very small fixes/adjustments)
 - Never reuse or overwrite an existing version tag.
 - Every new tag must have a corresponding GitHub Release and must be marked as `latest`.
+- Release creation is automated by GitHub Actions on tag push (`vX.Y.Z`).
+- Do not manually create a GitHub Release when the automation is active, to avoid duplicate release errors.
 
 6. Dependencies
 - If external Go dependencies are used, vendor them (`vendor/`) when required by Traefik plugin expectations.
@@ -69,6 +71,7 @@ Optional fields:
 - [ ] GitHub topic `traefik-plugin` is set.
 - [ ] Release tag created and pushed (for example `v0.1.0`).
 - [ ] New version follows `vX.Y.Z` and increments the previous published version.
+- [ ] Tag push triggered the automated release workflow successfully.
 - [ ] GitHub Release exists for the new tag and is marked `latest`.
 - [ ] No secrets/API keys committed in repository files.
 
@@ -83,8 +86,10 @@ git remote add origin git@github.com:<org-or-user>/<repo>.git
 git push -u origin main
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin vX.Y.Z
-gh release create vX.Y.Z --title "vX.Y.Z" --notes-file CHANGELOG.md --latest
 ```
+
+> Note: the GitHub Release is created automatically by workflow after pushing the tag.
+> Manual `gh release create ...` should only be used as fallback if automation is unavailable.
 
 Then on GitHub:
 - Set repository visibility to public.
