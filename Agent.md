@@ -36,6 +36,12 @@ Ensure this repository always satisfies Traefik plugin catalog requirements befo
 - Must have at least one semantic version Git tag (example: `v0.1.0`).
 - Tag must be pushed to origin.
 - Catalog indexing depends on versioned sources available through Go module proxy.
+- Every new published version must increment the previous version using `vX.Y.Z`:
+  - `X`: major release (breaking changes or major milestone)
+  - `Y`: minor release (new backward-compatible features)
+  - `Z`: patch release (very small fixes/adjustments)
+- Never reuse or overwrite an existing version tag.
+- Every new tag must have a corresponding GitHub Release and must be marked as `latest`.
 
 6. Dependencies
 - If external Go dependencies are used, vendor them (`vendor/`) when required by Traefik plugin expectations.
@@ -62,6 +68,8 @@ Optional fields:
 - [ ] Repo is public, not forked.
 - [ ] GitHub topic `traefik-plugin` is set.
 - [ ] Release tag created and pushed (for example `v0.1.0`).
+- [ ] New version follows `vX.Y.Z` and increments the previous published version.
+- [ ] GitHub Release exists for the new tag and is marked `latest`.
 - [ ] No secrets/API keys committed in repository files.
 
 ## Standard Release Procedure
@@ -73,8 +81,9 @@ git commit -m "Initial Traefik plugin"
 git branch -M main
 git remote add origin git@github.com:<org-or-user>/<repo>.git
 git push -u origin main
-git tag v0.1.0
-git push origin v0.1.0
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
+gh release create vX.Y.Z --title "vX.Y.Z" --notes-file CHANGELOG.md --latest
 ```
 
 Then on GitHub:

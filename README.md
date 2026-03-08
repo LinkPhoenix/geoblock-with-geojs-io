@@ -4,7 +4,7 @@ Simple plugin for [Traefik](https://github.com/containous/traefik) to block or a
 
 ## Author
 
-This project is maintained by **srydell**.
+This project is maintained by **LinkPhoenix**.
 
 ## Configuration
 
@@ -71,6 +71,8 @@ http:
           logApiRequests: true
           api: "https://get.geojs.io/v1/ip/country/{ip}"
           apiTimeoutMs: 750 # optional
+          trustForwardedHeaders: true
+          failClosedIfNoIP: true
           cacheSize: 15
           forceMonthlyUpdate: true
           allowUnknownCountries: false
@@ -93,7 +95,7 @@ experimental:
   plugins:
     geoblock:
       moduleName: "github.com/linkphoenix/geoblock-with-geojs-io"
-      version: "v0.3.3"
+      version: "v1.0.1"
 
 # other stuff you might have in your traefik-config
 entryPoints:
@@ -125,6 +127,8 @@ http:
           logApiRequests: false
           api: "https://get.geojs.io/v1/ip/country/{ip}"
           apiTimeoutMs: 500
+          trustForwardedHeaders: true
+          failClosedIfNoIP: true
           cacheSize: 25
           forceMonthlyUpdate: true
           allowUnknownCountries: false
@@ -186,6 +190,8 @@ my-GeoBlock:
       logApiRequests: false
       api: "https://get.geojs.io/v1/ip/country/{ip}"
       apiTimeoutMs: 750 # optional
+      trustForwardedHeaders: true
+      failClosedIfNoIP: true
       cacheSize: 15
       forceMonthlyUpdate: false
       allowUnknownCountries: false
@@ -485,6 +491,11 @@ If the `ignoreAPITimeout` option is set to `true`, a request is allowed even if 
 
 If the `ignoreAPIFailures` option is set to `true`, a request is allowed even if the API returns a non-200 status code or an error occurs during the API request.
 
+### Trust forwarded headers `trustForwardedHeaders`
+
+If set to `true`, the plugin uses `X-Forwarded-For` and `X-Real-IP` to resolve the client IP.
+If set to `false`, these headers are ignored and only `RemoteAddr` is used.
+
 ### Set custom HTTP header field to retrieve the country code from `ipGeolocationHttpHeaderField`
 
 Allow setting the name of a custom HTTP header field to retrieve the country code from. E.g. `cf-ipcountry` for Cloudflare.
@@ -541,6 +552,11 @@ Allows to define a target for the logs of the middleware. The path must look lik
 ### Trust first proxy IP in `X-Forwarded-For` `xForwardedForReverseProxy`
 
 Basically tells GeoBlock to only allow/deny a request based on the first IP address in the X-ForwardedFor HTTP header. This is useful for servers behind e.g. a Cloudflare proxy.
+
+### Fail closed if no IP found `failClosedIfNoIP`
+
+If set to `true`, the request is denied when no client IP can be resolved.
+If set to `false`, the request is allowed in that situation.
 
 ### Redirect denied requests `redirectUrlIfDenied`
 

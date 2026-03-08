@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [1.0.2] - 2026-03-08
+
+### Added
+- Added `trustForwardedHeaders` configuration to control whether `X-Forwarded-For` and `X-Real-IP` are trusted.
+- Added `failClosedIfNoIP` configuration to explicitly deny/allow requests when no client IP can be resolved.
+- Added GitHub Actions workflows for quality checks and automatic latest release creation on `vX.Y.Z` tags.
+- Added deterministic unit tests for IP resolution fallback, trust settings, and config validation.
+
+### Changed
+- Added fallback to `RemoteAddr` when forwarded headers are not used or not present.
+- Normalized country codes from configuration, API, and header input to uppercase.
+- Updated plugin metadata sample config to include new IP resolution security options.
+
+### Fixed
+- Fixed potential HTTP response body leak when GeoJS API returns non-200 responses.
+- Fixed timeout logging behavior when `ignoreAPITimeout` is disabled.
+- Fixed monthly refresh behavior to also honor `ignoreAPITimeout`.
+- Fixed allowed IP range logging to use `logAllowedRequests`.
+- Updated README author and plugin registry version example.
+
 ## [1.0.1] - 2026-03-08
 
 ### Added

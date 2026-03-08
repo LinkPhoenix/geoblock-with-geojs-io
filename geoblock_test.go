@@ -140,6 +140,185 @@ func TestInvalidDeniedRequestStatusCode(t *testing.T) {
 	}
 }
 
+func TestInvalidCountryCode(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "C1")
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {})
+
+	_, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err == nil {
+		t.Fatal("invalid country code should return an error")
+	}
+}
+
+func TestNegativeAPITimeout(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "CH")
+	cfg.APITimeoutMs = -1
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {})
+
+	_, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err == nil {
+		t.Fatal("negative API timeout should return an error")
+	}
+}
+
+func TestNegativeCacheSize(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "CH")
+	cfg.CacheSize = -1
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {})
+
+	_, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err == nil {
+		t.Fatal("negative cache size should return an error")
+	}
+}
+
+func TestRemoteAddrFallbackWhenNoForwardedHeaders(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "CH")
+	cfg.IPGeolocationHTTPHeaderField = ipGeolocationHTTPHeaderField
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(allowedRequest)) })
+
+	handler, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.RemoteAddr = chExampleIP + ":12345"
+	req.Header.Add(ipGeolocationHTTPHeaderField, "CH")
+
+	handler.ServeHTTP(recorder, req)
+	assertStatusCode(t, recorder.Result(), http.StatusOK)
+}
+
+func TestNoIPFailClosed(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "CH")
+	cfg.IPGeolocationHTTPHeaderField = ipGeolocationHTTPHeaderField
+	cfg.TrustForwardedHeaders = false
+	cfg.FailClosedIfNoIP = true
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(allowedRequest)) })
+
+	handler, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be ignored when trustForwardedHeaders=false.
+	req.Header.Add(xForwardedFor, chExampleIP)
+	req.Header.Add(ipGeolocationHTTPHeaderField, "CH")
+
+	handler.ServeHTTP(recorder, req)
+	assertStatusCode(t, recorder.Result(), http.StatusForbidden)
+}
+
+func TestNoIPFailOpen(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "CH")
+	cfg.IPGeolocationHTTPHeaderField = ipGeolocationHTTPHeaderField
+	cfg.TrustForwardedHeaders = false
+	cfg.FailClosedIfNoIP = false
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(allowedRequest)) })
+
+	handler, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be ignored when trustForwardedHeaders=false.
+	req.Header.Add(xForwardedFor, chExampleIP)
+	req.Header.Add(ipGeolocationHTTPHeaderField, "CH")
+
+	handler.ServeHTTP(recorder, req)
+	assertStatusCode(t, recorder.Result(), http.StatusOK)
+}
+
+func TestTrustForwardedHeadersEnabled(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "CH")
+	cfg.IPGeolocationHTTPHeaderField = ipGeolocationHTTPHeaderField
+	cfg.TrustForwardedHeaders = true
+	cfg.FailClosedIfNoIP = true
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(allowedRequest)) })
+
+	handler, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Add(xForwardedFor, chExampleIP)
+	req.Header.Add(ipGeolocationHTTPHeaderField, "CH")
+
+	handler.ServeHTTP(recorder, req)
+	assertStatusCode(t, recorder.Result(), http.StatusOK)
+}
+
+func TestCountryCodesAreNormalized(t *testing.T) {
+	cfg := createTesterConfig()
+	cfg.Countries = append(cfg.Countries, "ch")
+	cfg.IPGeolocationHTTPHeaderField = ipGeolocationHTTPHeaderField
+
+	ctx := context.Background()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(allowedRequest)) })
+
+	handler, err := geoblock.New(ctx, next, cfg, "GeoBlock")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.RemoteAddr = chExampleIP + ":4242"
+	req.Header.Add(ipGeolocationHTTPHeaderField, "ch")
+
+	handler.ServeHTTP(recorder, req)
+	assertStatusCode(t, recorder.Result(), http.StatusOK)
+}
+
 func TestAllowedCountry(t *testing.T) {
 	cfg := createTesterConfig()
 	cfg.Countries = append(cfg.Countries, "CH")

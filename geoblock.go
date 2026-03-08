@@ -41,7 +41,9 @@ type Config struct {
 	IgnoreAPITimeout             bool     `yaml:"ignoreApiTimeout"`
 	IgnoreAPIFailures            bool     `yaml:"ignoreApiFailures"`
 	IPGeolocationHTTPHeaderField string   `yaml:"ipGeolocationHttpHeaderField"`
+	TrustForwardedHeaders        bool     `yaml:"trustForwardedHeaders"`
 	XForwardedForReverseProxy    bool     `yaml:"xForwardedForReverseProxy"`
+	FailClosedIfNoIP             bool     `yaml:"failClosedIfNoIP"`
 	CacheSize                    int      `yaml:"cacheSize"`
 	ForceMonthlyUpdate           bool     `yaml:"forceMonthlyUpdate"`
 	AllowUnknownCountries        bool     `yaml:"allowUnknownCountries"`
@@ -65,7 +67,12 @@ type ipEntry struct {
 
 // CreateConfig creates the default plugin configuration.
 func CreateConfig() *Config {
-	return &Config{}
+	return &Config{
+		APITimeoutMs:          750,
+		CacheSize:             defaultCacheSize,
+		FailClosedIfNoIP:      true,
+		TrustForwardedHeaders: true,
+	}
 }
 
 // GeoBlock a Traefik plugin.
@@ -96,6 +103,9 @@ type GeoBlock struct {
 	logFile                      *os.File
 	redirectURLIfDenied          string
 	excludedPathRegexps          []*regexp.Regexp
+	trustForwardedHeaders        bool
+	failClosedIfNoIP             bool
+	geoJSClient                  *http.Client
 	name                         string
 	infoLogger                   *log.Logger
 	ipDatabasePersistence        *CachePersist
@@ -121,12 +131,24 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("no allowed country code provided")
 	}
 
-	// set default API timeout if non is given
+	normalizedCountries, err := normalizeCountryCodes(config.Countries)
+	if err != nil {
+		return nil, err
+	}
+	config.Countries = normalizedCountries
+
+	// set default API timeout if none is given
+	if config.APITimeoutMs < 0 {
+		return nil, fmt.Errorf("api timeout cannot be negative")
+	}
 	if config.APITimeoutMs == 0 {
 		config.APITimeoutMs = 750
 	}
 
 	// set default cache size if none is given
+	if config.CacheSize < 0 {
+		return nil, fmt.Errorf("cache size cannot be negative")
+	}
 	if config.CacheSize == 0 {
 		config.CacheSize = defaultCacheSize
 	}
@@ -213,6 +235,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		logFile:                      logFile,
 		redirectURLIfDenied:          config.RedirectURLIfDenied,
 		excludedPathRegexps:          excludedPathRegexps,
+		trustForwardedHeaders:        config.TrustForwardedHeaders,
+		failClosedIfNoIP:             config.FailClosedIfNoIP,
+		geoJSClient:                  &http.Client{Timeout: time.Millisecond * time.Duration(config.APITimeoutMs)},
 		name:                         name,
 		infoLogger:                   infoLogger,
 		ipDatabasePersistence:        ipDB, // may be nil => feature OFF
@@ -234,6 +259,25 @@ func (a *GeoBlock) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// if one of the ip addresses could not be parsed, return status forbidden
 		a.infoLogger.Printf("%s: %s", a.name, err)
 		rw.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if len(requestIPAddresses) == 0 {
+		if a.failClosedIfNoIP {
+			a.infoLogger.Printf("%s: request denied because no client IP was found", a.name)
+			if len(a.redirectURLIfDenied) != 0 {
+				rw.Header().Set("Location", a.redirectURLIfDenied)
+				rw.WriteHeader(http.StatusFound)
+				return
+			}
+			rw.WriteHeader(a.httpStatusCodeDeniedRequest)
+			return
+		}
+
+		if a.logAllowedRequests {
+			a.infoLogger.Printf("%s: request allowed because no client IP was found and failClosedIfNoIP=false", a.name)
+		}
+		a.next.ServeHTTP(rw, req)
 		return
 	}
 
@@ -307,7 +351,7 @@ func (a *GeoBlock) allowDenyIPAddress(requestIPAddr *net.IP, req *http.Request) 
 					req.Header.Set(countryHeader, countryCode)
 				}
 			}
-			if a.logLocalRequests {
+			if a.logAllowedRequests {
 				a.infoLogger.Printf("%s: request allowed [%s] since the IP address is explicitly allowed", a.name, requestIPAddr)
 			}
 			return true
@@ -340,7 +384,7 @@ func (a *GeoBlock) allowDenyCachedRequestIP(requestIPAddr *net.IP, req *http.Req
 
 			if os.IsTimeout(err) && a.ignoreAPITimeout {
 				a.infoLogger.Printf("%s: request allowed [%s] due to API timeout", a.name, requestIPAddr)
-				// TODO: this was previously an immediate response to the client
+				// Timeout is explicitly configured to fail-open.
 				return true, ""
 			}
 
@@ -363,6 +407,10 @@ func (a *GeoBlock) allowDenyCachedRequestIP(requestIPAddr *net.IP, req *http.Req
 		if err != nil {
 			if a.ignoreAPIFailures {
 				a.infoLogger.Printf("%s: request allowed [%s] due to API failure", a.name, requestIPAddr)
+				return true, ""
+			}
+			if os.IsTimeout(err) && a.ignoreAPITimeout {
+				a.infoLogger.Printf("%s: request allowed [%s] due to API timeout", a.name, requestIPAddr)
 				return true, ""
 			}
 			a.infoLogger.Printf("%s: request denied [%s] due to error: %s", a.name, requestIPAddr, err)
@@ -441,35 +489,51 @@ func (a *GeoBlock) cachedRequestIP(requestIPAddr *net.IP, req *http.Request) (bo
 
 func (a *GeoBlock) collectRemoteIP(req *http.Request) ([]*net.IP, error) {
 	var ipList []*net.IP
+	appendParsedIP := func(values []string) error {
+		for _, value := range values {
+			value = strings.Trim(value, " ")
+			if value == "" {
+				continue
+			}
 
-	splitFn := func(c rune) bool {
-		return c == ','
+			ipAddress, err := parseIPAddress(value)
+			if err != nil {
+				return fmt.Errorf("parsing failed: %s", err)
+			}
+
+			ipList = append(ipList, &ipAddress)
+		}
+
+		return nil
 	}
 
-	xForwardedForValue := req.Header.Get(xForwardedFor)
-	xForwardedForIPs := strings.FieldsFunc(xForwardedForValue, splitFn)
+	if a.trustForwardedHeaders {
+		splitFn := func(c rune) bool {
+			return c == ','
+		}
 
-	xRealIPValue := req.Header.Get(xRealIP)
-	xRealIPList := strings.FieldsFunc(xRealIPValue, splitFn)
+		xForwardedForValue := req.Header.Get(xForwardedFor)
+		xForwardedForIPs := strings.FieldsFunc(xForwardedForValue, splitFn)
+		if err := appendParsedIP(xForwardedForIPs); err != nil {
+			return ipList, err
+		}
 
-	for _, value := range xForwardedForIPs {
-		value = strings.Trim(value, " ")
-		ipAddress, err := parseIP(value)
+		xRealIPValue := req.Header.Get(xRealIP)
+		xRealIPList := strings.FieldsFunc(xRealIPValue, splitFn)
+		if err := appendParsedIP(xRealIPList); err != nil {
+			return ipList, err
+		}
+	}
+
+	if len(ipList) == 0 {
+		ipAddress, err := parseIPAddress(req.RemoteAddr)
 		if err != nil {
 			return ipList, fmt.Errorf("parsing failed: %s", err)
 		}
 
-		ipList = append(ipList, &ipAddress)
-	}
-
-	for _, value := range xRealIPList {
-		value = strings.Trim(value, " ")
-		ipAddress, err := parseIP(value)
-		if err != nil {
-			return ipList, fmt.Errorf("parsing failed: %s", err)
+		if ipAddress != nil {
+			ipList = append(ipList, &ipAddress)
 		}
-
-		ipList = append(ipList, &ipAddress)
 	}
 
 	return ipList, nil
@@ -508,9 +572,9 @@ func (a *GeoBlock) getCountryCode(req *http.Request, ipAddressString string) (st
 		)
 	}
 
-	country, err := a.callGeoJS(ipAddressString)
+	country, err := a.callGeoJS(req.Context(), ipAddressString)
 	if err != nil {
-		if !os.IsTimeout(err) && !a.ignoreAPITimeout {
+		if !os.IsTimeout(err) || !a.ignoreAPITimeout {
 			a.infoLogger.Printf("%s: %s", a.name, err)
 		}
 		return "", err
@@ -519,29 +583,24 @@ func (a *GeoBlock) getCountryCode(req *http.Request, ipAddressString string) (st
 	return country, nil
 }
 
-func (a *GeoBlock) callGeoJS(ipAddress string) (string, error) {
-	geoJsClient := http.Client{
-		Timeout: time.Millisecond * time.Duration(a.apiTimeoutMs),
-	}
-
+func (a *GeoBlock) callGeoJS(ctx context.Context, ipAddress string) (string, error) {
 	apiURI := strings.Replace(a.apiURI, "{ip}", ipAddress, 1)
 
-	req, err := http.NewRequest(http.MethodGet, apiURI, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURI, nil)
 	if err != nil {
 		return "", err
 	}
 
-	res, err := geoJsClient.Do(req)
+	res, err := a.geoJSClient.Do(req)
 	if err != nil {
 		return "", err
+	}
+	if res.Body != nil {
+		defer res.Body.Close()
 	}
 
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("API response status code: %d", res.StatusCode)
-	}
-
-	if res.Body != nil {
-		defer res.Body.Close()
 	}
 
 	body, err := io.ReadAll(res.Body)
@@ -549,17 +608,16 @@ func (a *GeoBlock) callGeoJS(ipAddress string) (string, error) {
 		return "", err
 	}
 
-	sb := string(body)
-	countryCode := strings.TrimSuffix(sb, "\n")
+	countryCode := strings.ToUpper(strings.TrimSpace(string(body)))
 
 	// api response for unknown country
-	if len([]rune(countryCode)) == len(a.unknownCountryCode) && countryCode == a.unknownCountryCode {
+	if strings.EqualFold(countryCode, a.unknownCountryCode) {
 		return unknownCountryCode, nil
 	}
 
-	// this could possible cause a DoS attack
-	if len([]rune(countryCode)) != countryCodeLength {
-		return "", fmt.Errorf("API response has more or less than 2 characters")
+	countryCode, err = normalizeCountryCode(countryCode)
+	if err != nil {
+		return "", err
 	}
 
 	if a.logAPIRequests {
@@ -571,12 +629,7 @@ func (a *GeoBlock) callGeoJS(ipAddress string) (string, error) {
 
 func (a *GeoBlock) readIPGeolocationHTTPHeader(req *http.Request, name string) (string, error) {
 	countryCode := req.Header.Get(name)
-
-	if len([]rune(countryCode)) != countryCodeLength {
-		return "", fmt.Errorf("API response has more or less than 2 characters")
-	}
-
-	return countryCode, nil
+	return normalizeCountryCode(countryCode)
 }
 
 func stringInSlice(a string, list []string) bool {
@@ -598,14 +651,64 @@ func ipInSlice(a net.IP, list []net.IP) bool {
 	return false
 }
 
-func parseIP(addr string) (net.IP, error) {
-	ipAddress := net.ParseIP(addr)
+func parseIPAddress(addr string) (net.IP, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil, nil
+	}
 
-	if ipAddress == nil {
+	if ipAddress := net.ParseIP(addr); ipAddress != nil {
+		return ipAddress, nil
+	}
+
+	parsedHost, _, err := net.SplitHostPort(addr)
+	if err != nil {
 		return nil, fmt.Errorf("unable parse IP address from address [%s]", addr)
 	}
 
-	return ipAddress, nil
+	parsedHost = strings.Trim(parsedHost, "[]")
+	if ipAddress := net.ParseIP(parsedHost); ipAddress != nil {
+		return ipAddress, nil
+	}
+
+	return nil, fmt.Errorf("unable parse IP address from address [%s]", addr)
+}
+
+func normalizeCountryCode(raw string) (string, error) {
+	countryCode := strings.ToUpper(strings.TrimSpace(raw))
+
+	if len([]rune(countryCode)) != countryCodeLength {
+		return "", fmt.Errorf("API response has more or less than 2 characters")
+	}
+
+	for _, r := range countryCode {
+		if r < 'A' || r > 'Z' {
+			return "", fmt.Errorf("country code must only contain ASCII letters")
+		}
+	}
+
+	return countryCode, nil
+}
+
+func normalizeCountryCodes(rawCodes []string) ([]string, error) {
+	normalized := make([]string, 0, len(rawCodes))
+	seen := make(map[string]struct{}, len(rawCodes))
+
+	for _, code := range rawCodes {
+		normalizedCode, err := normalizeCountryCode(code)
+		if err != nil {
+			return nil, fmt.Errorf("invalid country code %q: %w", code, err)
+		}
+
+		if _, ok := seen[normalizedCode]; ok {
+			continue
+		}
+
+		seen[normalizedCode] = struct{}{}
+		normalized = append(normalized, normalizedCode)
+	}
+
+	return normalized, nil
 }
 
 // https://stackoverflow.com/questions/41240761/check-if-ip-address-is-in-private-network-space
@@ -722,6 +825,8 @@ func printConfiguration(name string, config *Config, logger *log.Logger) {
 	logger.Printf("%s: API uri: %s", name, config.API)
 	logger.Printf("%s: API timeout: %d", name, config.APITimeoutMs)
 	logger.Printf("%s: ignore API timeout: %t", name, config.IgnoreAPITimeout)
+	logger.Printf("%s: trust forwarded headers: %t", name, config.TrustForwardedHeaders)
+	logger.Printf("%s: fail closed if no IP found: %t", name, config.FailClosedIfNoIP)
 	logger.Printf("%s: cache size: %d", name, config.CacheSize)
 	logger.Printf("%s: force monthly update: %t", name, config.ForceMonthlyUpdate)
 	logger.Printf("%s: allow unknown countries: %t", name, config.AllowUnknownCountries)
