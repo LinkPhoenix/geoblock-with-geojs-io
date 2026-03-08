@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [1.0.4] - 2026-03-08
+
+### Changed
+- Updated `go.mod` to `go 1.26.1` (latest stable Go release as of 2026-03-08).
+- Updated CI Go version in `Quality` workflow to `1.26.1` to keep checks aligned with the module version.
+
 ## [1.0.2] - 2026-03-08
 
 ### Added
