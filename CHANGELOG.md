@@ -24,6 +24,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Fixed allowed IP range logging to use `logAllowedRequests`.
 - Updated README author and plugin registry version example.
 
+## [1.0.3] - 2026-03-08
+
+### Fixed
+- Normalized repository files to LF line endings to avoid hidden CRLF mismatches in CI.
+- Hardened `Quality` workflow module/import consistency check by stripping `\r` before comparison.
+
 ## [1.0.1] - 2026-03-08
 
 ### Added

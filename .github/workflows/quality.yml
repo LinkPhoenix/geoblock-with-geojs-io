@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          module_path="$(awk '/^module / { print $2 }' go.mod)"
-          import_path="$(awk -F': *' '/^import:/ { print $2 }' .traefik.yml)"
+          module_path="$(awk '/^module / { print $2 }' go.mod | tr -d '\r')"
+          import_path="$(awk -F': *' '/^import:/ { print $2 }' .traefik.yml | tr -d '\r')"
 
           if [[ -z "${module_path}" || -z "${import_path}" ]]; then
             echo "go.mod module path or .traefik.yml import is empty"
