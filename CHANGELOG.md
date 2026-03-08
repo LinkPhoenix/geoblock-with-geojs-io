@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [1.0.1] - 2026-03-08
+
+### Added
+- Added Traefik plugin metadata `iconPath` pointing to `.assets/logo.png`.
+
+### Changed
+- Published patch release `v1.0.1` as the new latest release.
+
 ## [1.0.0] - 2026-03-08
 
 ### Added
@@ -25,4 +33,3 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Added strict validation for invalid `allowedIPAddresses` entries.
 - Added backward-compatible support for legacy `blacklist` key while documenting `blackListMode`.
 - Added tests for nil config and invalid allowed IP address cases.
-

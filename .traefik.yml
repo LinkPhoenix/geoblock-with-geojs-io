@@ -4,6 +4,7 @@ type: middleware
 import: github.com/linkphoenix/geoblock-with-geojs-io
 
 summary: "Block requests based on the client country using GeoJS.io"
+iconPath: .assets/logo.png
 
 testData:
   silentStartUp: false
