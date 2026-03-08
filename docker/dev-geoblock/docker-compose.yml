@@ -1,0 +1,58 @@
+services:
+  traefik:
+    image: traefik:v3.6.4
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./../traefik-config/traefik.yml:/etc/traefik/traefik.yml
+      - ./../traefik-config/dynamic-configuration.yml:/etc/traefik/dynamic-configuration.yml
+      - ./../../../geoblock:/plugins-local/src/github.com/linkphoenix/geoblock-with-geojs-io
+      - ./../log:/log
+      - ./../log/geoblock:/geoblock
+
+    labels:
+      - "traefik.http.routers.dash.rule=Host(`dash.localhost`)"
+      - "traefik.http.routers.dash.service=api@internal"
+
+    ports:
+      - "80:80"
+
+  hello:
+    image: traefik/whoami
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.hello.entrypoints=http
+      - traefik.http.routers.hello.rule=Host(`hello.localhost`)
+      - traefik.http.services.hello.loadbalancer.server.port=80
+      - traefik.http.routers.hello.middlewares=my-plugin@file
+
+  hello1:
+    image: traefik/whoami
+    command:
+      - --port=81
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.hello1.entrypoints=http
+      - traefik.http.routers.hello1.rule=Host(`hello1.localhost`)
+      - traefik.http.services.hello1.loadbalancer.server.port=81
+      - traefik.http.routers.hello1.middlewares=my-plugin@file
+
+  hello2:
+    image: traefik/whoami
+    command:
+      - --port=82
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.hello2.entrypoints=http
+      - traefik.http.routers.hello2.rule=Host(`hello2.localhost`)
+      - traefik.http.services.hello2.loadbalancer.server.port=82
+      - traefik.http.routers.hello2.middlewares=my-plugin@file
+
+  whoami:
+    image: jwilder/whoami
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.entrypoints=http
+      - traefik.http.routers.whoami.rule=Host(`whoami.localhost`)
+      - traefik.http.services.whoami.loadbalancer.server.port=8000
+      - traefik.http.routers.whoami.middlewares=my-plugin2@file
